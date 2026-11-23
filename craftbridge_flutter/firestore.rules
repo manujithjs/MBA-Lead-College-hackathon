@@ -1,0 +1,460 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'manujith.js@lead.ac.in'
+      );
+    }
+
+    function isValidTrade(trade) {
+      return trade in [
+        'Electrical',
+        'Plumbing',
+        'Appliance Repair',
+        'Cleaning'
+      ];
+    }
+
+    function isValidCertId(certId) {
+      return certId is string
+        && certId.size() >= 8
+        && certId.size() <= 32
+        && certId.matches('^(SOFTI|CB)-[0-9]{4}-[A-Z]{2}-[0-9]{3,5}$');
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserAccount(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'email', 'portalType',
+          'neighborhood', 'lat', 'lng', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'phone', 'portalType',
+          'neighborhood', 'lat', 'lng', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
+        && data.portalType in ['client', 'provider']
+        && data.neighborhood is string && data.neighborhood.size() >= 1 && data.neighborhood.size() <= 100
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProviderProfile(data) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'trade', 'trainingDays', 'certificateId',
+          'trainingCenter', 'practicalScore', 'verificationStatus', 'isAvailable',
+          'hourlyRate', 'completedJobs', 'rating', 'zoneName', 'lat', 'lng',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'avatarUrl', 'trade', 'trainingDays', 'certificateId',
+          'trainingCenter', 'practicalScore', 'verificationStatus', 'isAvailable',
+          'hourlyRate', 'completedJobs', 'rating', 'zoneName', 'lat', 'lng', 'bio',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 300))
+        && isValidTrade(data.trade)
+        && data.trainingDays is number && data.trainingDays >= 10 && data.trainingDays <= 30
+        && isValidCertId(data.certificateId)
+        && data.trainingCenter is string && data.trainingCenter.size() >= 2 && data.trainingCenter.size() <= 100
+        && data.practicalScore is number && data.practicalScore >= 60 && data.practicalScore <= 100
+        && data.verificationStatus in ['pending', 'verified', 'revoked']
+        && data.isAvailable is bool
+        && data.hourlyRate is number && data.hourlyRate >= 10 && data.hourlyRate <= 500
+        && data.completedJobs is number && data.completedJobs >= 0 && data.completedJobs <= 100000
+        && data.rating is number && data.rating >= 0 && data.rating <= 5
+        && data.zoneName is string && data.zoneName.size() >= 2 && data.zoneName.size() <= 80
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 400))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCertificate(data, certId) {
+      return data.keys().hasAll([
+          'certId', 'providerId', 'holderName', 'trade', 'trainingDays',
+          'practicalScore', 'centerName', 'modulesCompleted', 'status',
+          'issuedDate', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'certId', 'providerId', 'holderName', 'trade', 'trainingDays',
+          'practicalScore', 'centerName', 'modulesCompleted', 'status',
+          'issuedDate', 'verifiedBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidCertId(data.certId) && data.certId == certId
+        && data.providerId is string && isValidId(data.providerId)
+        && data.holderName is string && data.holderName.size() >= 1 && data.holderName.size() <= 80
+        && data.trade is string && data.trade.size() >= 2 && data.trade.size() <= 40
+        && data.trainingDays is number && data.trainingDays >= 10 && data.trainingDays <= 30
+        && data.practicalScore is number && data.practicalScore >= 60 && data.practicalScore <= 100
+        && data.centerName is string && data.centerName.size() >= 2 && data.centerName.size() <= 100
+        && data.modulesCompleted is list && data.modulesCompleted.size() >= 1 && data.modulesCompleted.size() <= 8
+        && data.modulesCompleted[0] is string && data.modulesCompleted[0].size() <= 80
+        && data.status in ['pending', 'verified', 'revoked']
+        && data.issuedDate is string && data.issuedDate.size() >= 4 && data.issuedDate.size() <= 30
+        && (!('verifiedBy' in data) || (data.verifiedBy is string && data.verifiedBy.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidServiceRequest(data) {
+      return data.keys().hasAll([
+          'clientId', 'clientName', 'providerId', 'providerName', 'title',
+          'description', 'trade', 'urgency', 'zoneName', 'lat', 'lng',
+          'maxRadiusKm', 'budgetMin', 'budgetMax', 'estimatedBudget',
+          'photos', 'contactPreview', 'status', 'paymentStatus',
+          'paymentTxnId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'clientId', 'clientName', 'providerId', 'providerName', 'title',
+          'description', 'trade', 'urgency', 'zoneName', 'lat', 'lng',
+          'maxRadiusKm', 'budgetMin', 'budgetMax', 'estimatedBudget',
+          'photos', 'contactPreview', 'status', 'paymentStatus',
+          'paymentTxnId', 'createdAt', 'updatedAt'
+        ])
+        && data.clientId is string && isValidId(data.clientId)
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 80
+        && data.providerId is string && data.providerId.size() <= 128
+        && data.providerName is string && data.providerName.size() <= 80
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 120
+        && data.description is string && data.description.size() >= 5 && data.description.size() <= 600
+        && isValidTrade(data.trade)
+        && data.urgency in ['standard', 'same_day', 'emergency']
+        && data.zoneName is string && data.zoneName.size() >= 2 && data.zoneName.size() <= 80
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && data.maxRadiusKm is number && data.maxRadiusKm >= 1 && data.maxRadiusKm <= 15
+        && data.budgetMin is number && data.budgetMin >= 10 && data.budgetMin <= 5000
+        && data.budgetMax is number && data.budgetMax >= data.budgetMin && data.budgetMax <= 5000
+        && data.estimatedBudget is number && data.estimatedBudget >= 10 && data.estimatedBudget <= 5000
+        && data.photos is list && data.photos.size() <= 3
+        && (data.photos.size() == 0 || (data.photos[0] is string && data.photos[0].size() <= 65000))
+        && data.contactPreview is string && data.contactPreview.size() <= 100
+        && data.status in ['open', 'accepted', 'in_progress', 'completed', 'cancelled']
+        && data.paymentStatus in ['unpaid', 'escrow_held', 'released']
+        && data.paymentTxnId is string && data.paymentTxnId.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRequestContactDetails(data, requestId) {
+      return data.keys().hasAll([
+          'requestId', 'clientId', 'contactPhone', 'contactAddress', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'requestId', 'clientId', 'contactPhone', 'contactAddress', 'preferredWindow', 'createdAt', 'updatedAt'
+        ])
+        && data.requestId is string && data.requestId == requestId && isValidId(data.requestId)
+        && data.clientId is string && isValidId(data.clientId)
+        && data.contactPhone is string && data.contactPhone.size() >= 5 && data.contactPhone.size() <= 30
+        && data.contactAddress is string && data.contactAddress.size() >= 5 && data.contactAddress.size() <= 200
+        && (!('preferredWindow' in data) || (data.preferredWindow is string && data.preferredWindow.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll([
+          'txnId', 'requestId', 'clientId', 'providerId', 'amount',
+          'platformFee', 'providerPayout', 'method', 'status',
+          'receiptHash', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'txnId', 'requestId', 'clientId', 'providerId', 'amount',
+          'platformFee', 'providerPayout', 'method', 'status',
+          'receiptHash', 'createdAt', 'updatedAt'
+        ])
+        && data.txnId is string && data.txnId.size() >= 8 && data.txnId.size() <= 40 && data.txnId.matches('^TXN-[A-Z0-9\\-]+$')
+        && data.requestId is string && isValidId(data.requestId)
+        && data.clientId is string && isValidId(data.clientId)
+        && data.providerId is string && data.providerId.size() <= 128
+        && data.amount is number && data.amount >= 10 && data.amount <= 5000
+        && data.platformFee is number && data.platformFee >= 0 && data.platformFee <= 500
+        && data.providerPayout is number && data.providerPayout >= 10 && data.providerPayout <= 5000
+        && data.method in ['upi', 'card', 'netbanking', 'wallet']
+        && data.status in ['escrow_held', 'released']
+        && data.receiptHash is string && data.receiptHash.size() >= 8 && data.receiptHash.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. Private User Accounts (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'phone', 'portalType', 'neighborhood', 'lat', 'lng', 'updatedAt'
+        ]);
+      allow delete: if isAdmin();
+    }
+
+    // 2. Public Provider Directory (No PII)
+    match /providers/{providerId} {
+      allow get: if isValidId(providerId);
+      allow list: if resource.data.verificationStatus in ['verified', 'pending', 'revoked'];
+      allow create: if isValidId(providerId)
+        && isSignedIn()
+        && isValidProviderProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            providerId == request.auth.uid
+            && incoming().uid == request.auth.uid
+            && incoming().verificationStatus == 'pending'
+            && incoming().completedJobs == 0
+            && incoming().rating == 5
+          )
+        );
+      allow update: if isValidId(providerId)
+        && isSignedIn()
+        && isValidProviderProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            existing().uid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'avatarUrl', 'isAvailable', 'hourlyRate', 'zoneName', 'lat', 'lng', 'bio', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    // 3. Real-Time Practical Training Certificates (No PII)
+    match /certificates/{certId} {
+      allow get: if isValidId(certId);
+      allow list: if resource.data.status in ['verified', 'pending', 'revoked'];
+      allow create: if isValidCertId(certId)
+        && isSignedIn()
+        && isValidCertificate(incoming(), certId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            incoming().providerId == request.auth.uid
+            && incoming().status == 'pending'
+          )
+        );
+      allow update: if isValidCertId(certId)
+        && isAdmin()
+        && isValidCertificate(incoming(), certId)
+        && incoming().certId == existing().certId
+        && incoming().providerId == existing().providerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    // 4. Service Requests (10-15 km Dispatch Feed)
+    match /serviceRequests/{requestId} {
+      allow get: if isValidId(requestId) && isSignedIn() && (
+        existing().clientId == request.auth.uid ||
+        existing().providerId == request.auth.uid ||
+        existing().status == 'open' ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid ||
+        resource.data.status == 'open' ||
+        isAdmin()
+      );
+      allow create: if isValidId(requestId)
+        && isSignedIn()
+        && isValidServiceRequest(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            incoming().clientId == request.auth.uid
+            && incoming().providerId == ''
+            && incoming().providerName == ''
+            && incoming().status == 'open'
+            && incoming().paymentStatus == 'unpaid'
+            && incoming().paymentTxnId == ''
+          )
+        );
+      allow update: if isValidId(requestId)
+        && isSignedIn()
+        && isValidServiceRequest(incoming())
+        && incoming().clientId == existing().clientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (!(existing().status == 'cancelled' || (existing().status == 'completed' && existing().paymentStatus == 'released')) && (
+            (
+              existing().clientId == request.auth.uid
+              && existing().status == 'open'
+              && incoming().status in ['open', 'cancelled']
+              && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'urgency', 'budgetMin', 'budgetMax', 'estimatedBudget', 'status', 'updatedAt'])
+            ) ||
+            (
+              existing().status == 'open'
+              && incoming().status == 'accepted'
+              && incoming().providerId == request.auth.uid
+              && exists(/databases/$(database)/documents/providers/$(request.auth.uid))
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'providerId', 'providerName', 'updatedAt'])
+            ) ||
+            (
+              existing().providerId == request.auth.uid
+              && (
+                (existing().status == 'accepted' && incoming().status == 'in_progress') ||
+                (existing().status == 'in_progress' && incoming().status == 'completed')
+              )
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            ) ||
+            (
+              existing().clientId == request.auth.uid
+              && (
+                (existing().paymentStatus == 'unpaid' && incoming().paymentStatus in ['escrow_held', 'released']) ||
+                (existing().paymentStatus == 'escrow_held' && incoming().paymentStatus == 'released')
+              )
+              && incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'paymentTxnId', 'updatedAt'])
+            )
+          ))
+        );
+      allow delete: if isAdmin();
+
+      // Master Gate Subcollection: Customer PII Contact Details unlocked to assigned vendor
+      match /contactDetails/{detailId} {
+        allow get: if isValidId(requestId) && detailId == 'private' && isSignedIn() && (
+          get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.clientId == request.auth.uid ||
+          get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.providerId == request.auth.uid ||
+          isAdmin()
+        );
+        allow list: if false;
+        allow create: if isValidId(requestId)
+          && detailId == 'private'
+          && isSignedIn()
+          && isValidRequestContactDetails(incoming(), requestId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() || (
+              incoming().clientId == request.auth.uid &&
+              getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)).data.clientId == request.auth.uid
+            )
+          );
+        allow update: if isValidId(requestId)
+          && detailId == 'private'
+          && isSignedIn()
+          && isValidRequestContactDetails(incoming(), requestId)
+          && incoming().clientId == existing().clientId
+          && incoming().requestId == existing().requestId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() || (
+              existing().clientId == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['contactPhone', 'contactAddress', 'preferredWindow', 'updatedAt'])
+            )
+          );
+        allow delete: if isAdmin();
+      }
+    }
+
+    // 5. Private Escrow Payments (Participants & Admin Only)
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && isSignedIn() && (
+        existing().clientId == request.auth.uid ||
+        existing().providerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.clientId == request.auth.uid ||
+        resource.data.providerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isValidId(paymentId)
+        && isSignedIn()
+        && isValidPayment(incoming())
+        && incoming().clientId == request.auth.uid
+        && incoming().status in ['escrow_held', 'released']
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/serviceRequests/$(incoming().requestId));
+      allow update: if isValidId(paymentId)
+        && isSignedIn()
+        && isValidPayment(incoming())
+        && incoming().clientId == existing().clientId
+        && incoming().requestId == existing().requestId
+        && incoming().txnId == existing().txnId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            existing().clientId == request.auth.uid
+            && existing().status == 'escrow_held'
+            && incoming().status == 'released'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    // 6. Admins registry
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // 7. Connection Test Document (read-only ping)
+    match /test/connection {
+      allow get: if true;
+    }
+  }
+}
