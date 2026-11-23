@@ -27,3 +27,4 @@ Full conversion of the CraftBridge / Softi React + Firebase marketplace into a m
    flutter run
    ```
    *(Note: `flutter create .` generates the platform `android/`, `ios/`, and `web/` runner folders around `lib/` and `assets/`.)*
+"# MBA-Lead-College-hackathon" 
